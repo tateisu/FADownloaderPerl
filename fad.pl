@@ -70,13 +70,14 @@ END
 my $net = "192.168.1";
 my $downloadFolder = "./download";
 my $recordFolder = "./record";
+my $fileTypeSpec=".jp*";
 my $checkInterval = 5;
 my $verbose = 0;
-my $intervalArpCheck = 3;
+my $intervalArpCheck = 5;
 my $intervalSpray = 5;
 my $timeoutFlashAirCheck = 15;
 my $optProtectedOnly = 0;
-my $fileTypeSpec=".jp*";
+my $downloadTimeout = 30;
 
 GetOptions (
  "net=s" => \$net
@@ -107,7 +108,6 @@ while( $fileTypeSpec =~ /(\S+)/g ){
 }
 (@reFileTypes >0 ) or die "parameter 'filetype': must contains valid file types.\n";
 
-my $downloadTimeout = 30;
 
 my $downloadBusy = 0;
 my $timeLastDownload = 0;
@@ -611,7 +611,7 @@ my $timer = AnyEvent->timer(
 		download();
 		arpCheck();
 		spray();
-		$verbose >= 2 and log("anyevent active connections: $AnyEvent::HTTP::ACTIVE");
+		$verbose >= 10 and log("anyevent active connections: $AnyEvent::HTTP::ACTIVE");
 		
 		if( $progressEnabled ){
 			sayProgress();
