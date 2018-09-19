@@ -10,14 +10,56 @@ use URI::Escape;
 use Carp qw( cluck );
 use Time::Local qw(timelocal);
 
-# perlをインストール
-# cpanminus をインストール
-# 以下のコマンドでこのスクリプトの依存関係をインストール
-# cpanm Data::Dump AnyEvent::HTTP URI::Escape 
-# このスクリプトを起動
-# perl fad.pl --net=192.168.1
-# 起動したフォルダの下に downloadフォルダが出来てそこに転送される
-# ダウンロード履歴の代わりにrecord フォルダができる
+#########################################################
+
+use subs 'log';
+sub log{
+	my @lt = localtime;
+	$lt[4]+=1;
+	$lt[5]+=1900;
+	my $timestr = sprintf("%d-%02d-%02d_%02d:%02d:%02d",reverse @lt[0..5]);
+	warn $timestr," ",@_,"\n";
+}
+
+sub formatFileSize($){
+	my( $n )= @_;
+	if($n >= 1000000000){
+		return sprintf("%.1fG",$n/(1000000000));
+	}elsif($n >= 1000000){
+		return sprintf("%.1fM",$n/(1000000));
+	}elsif( $n >= 1000){
+		return sprintf("%.1fK",$n/(1000));
+	}else{
+		return sprintf("%d",$n);
+	}
+}
+
+sub writeFile{
+	my($path,$data)=@_;
+	if( not open(my $fh,">:raw",$path) ){
+		log("$path: $!");
+	}else{
+		print $fh $data;
+		if( not close ($fh) ){
+			log( "$path: $!");
+		}else{
+			log( "$path file saved.");
+		}
+	}
+}
+
+sub statusErrorString($){
+	my($headers)=@_;
+	my $status = $headers->{Status};
+	return "Connection failed." if $status == 595;
+	return "Can't receive response." if $status == 596;
+	return "Bad response." if $status == 597;
+	return "Request cancelled." if $status == 598;
+
+	return "HTTP error $status" if $status;
+
+	return "(? missing status)";
+}
 
 #########################################################
 
@@ -66,15 +108,6 @@ options:
 
 END
 	exit 1;
-}
-
-use subs 'log';
-sub log{
-	my @lt = localtime;
-	$lt[4]+=1;
-	$lt[5]+=1900;
-	my $timestr = sprintf("%d-%02d-%02d_%02d:%02d:%02d",reverse @lt[0..5]);
-	warn $timestr," ",@_,"\n";
 }
 
 #########################################################
@@ -164,8 +197,6 @@ AnyEvent->signal(
 	}
 );
 
-
-
 #########################################################
 # flashair connection check
 
@@ -226,7 +257,7 @@ sub detectionTcp(){
 }
 
 #########################################################
-# read arp
+# old detection behavor
 
 my $timeLastArpCheck = 0;
 my $lastStrDevices ="";
@@ -272,9 +303,6 @@ sub arpCheck{
 	}
 }
 
-#########################################################
-# spray
-
 my $timeLastSpray = 0;
 sub spray{
 	my $now = time;
@@ -303,86 +331,8 @@ sub spray{
 	close($socket)
 }
 
-
 #########################################################
-
-sub formatFileSize($){
-	my( $n )= @_;
-	if($n >= 1000000000){
-		return sprintf("%.1fG",$n/(1000000000));
-	}elsif($n >= 1000000){
-		return sprintf("%.1fM",$n/(1000000));
-	}elsif( $n >= 1000){
-		return sprintf("%.1fK",$n/(1000));
-	}else{
-		return sprintf("%d",$n);
-	}
-}
-
-sub sayProgress{
-	my $currnetBytes = length($progressBody);
-
-	my $currnetBytesPercent;
-	if( $currentFileSize <= 0 ){
-		$currnetBytesPercent = 0;
-	}else{
-		$currnetBytesPercent = 100 * ($currnetBytes) / $currentFileSize ;
-	}
-
-	my $progressBytesPercent;
-	if( $countBytes == 0 ){
-		$progressBytesPercent = 0;
-	}else{
-		$progressBytesPercent = 100 * ($progressBytes+$currnetBytes) / $countBytes ;
-	}
-	
-	my $line = sprintf("#total %s/%s(%d%%)bytes #current %s/%s(%d%%)bytes #file %d/%d %s"
-
-		,formatFileSize($progressBytes+$currnetBytes)
-		,formatFileSize($countBytes)
-		,$progressBytesPercent
-
-		,formatFileSize($currnetBytes)
-		,formatFileSize($currentFileSize)
-		,$currnetBytesPercent
-
-		,$progressFiles +1,
-		,$countFiles
-		,$currentFile
-	);
-	
-	if( $line ne $lastProgressString ){
-		$lastProgressString = $line;
-		log($line);
-	}
-}
-
-sub statusErrorString($){
-	my($headers)=@_;
-	my $status = $headers->{Status};
-	return "Connection failed." if $status == 595;
-	return "Can't receive response." if $status == 596;
-	return "Bad response." if $status == 597;
-	return "Request cancelled." if $status == 598;
-
-	return "HTTP error $status" if $status;
-
-	return "(? missing status)";
-}
-
-sub writeFile{
-	my($path,$data)=@_;
-	if( not open(my $fh,">:raw",$path) ){
-		log("$path: $!");
-	}else{
-		print $fh $data;
-		if( not close ($fh) ){
-			log( "$path: $!");
-		}else{
-			log( "$path file saved.");
-		}
-	}
-}
+# folder scan / file download
 
 sub clearBusy{
 	$timeLastDownload = time;
@@ -574,7 +524,43 @@ sub startFolder($){
 		,\&handleFolderResult;
 }
 
+sub sayProgress{
+	my $currnetBytes = length($progressBody);
 
+	my $currnetBytesPercent;
+	if( $currentFileSize <= 0 ){
+		$currnetBytesPercent = 0;
+	}else{
+		$currnetBytesPercent = 100 * ($currnetBytes) / $currentFileSize ;
+	}
+
+	my $progressBytesPercent;
+	if( $countBytes == 0 ){
+		$progressBytesPercent = 0;
+	}else{
+		$progressBytesPercent = 100 * ($progressBytes+$currnetBytes) / $countBytes ;
+	}
+	
+	my $line = sprintf("#total %s/%s(%d%%)bytes #current %s/%s(%d%%)bytes #file %d/%d %s"
+
+		,formatFileSize($progressBytes+$currnetBytes)
+		,formatFileSize($countBytes)
+		,$progressBytesPercent
+
+		,formatFileSize($currnetBytes)
+		,formatFileSize($currentFileSize)
+		,$currnetBytesPercent
+
+		,$progressFiles +1,
+		,$countFiles
+		,$currentFile
+	);
+	
+	if( $line ne $lastProgressString ){
+		$lastProgressString = $line;
+		log($line);
+	}
+}
 
 sub handleFileResult{
 	my $willRetry=1;
@@ -651,7 +637,6 @@ sub download{
 
 	# ダウンロード処理中
 	$downloadBusy =1;
-	$timeLastDownload = $now;
 	$targetAddr = $device->{addr};
 	$beforeFile = 1;
 	@queue=();
