@@ -1,3 +1,5 @@
+[日本語](./README.ja.md)
+
 # FADownloaderPerl
 Perl script to detect FlashAir SD-WLAN card in network and download files.
 
