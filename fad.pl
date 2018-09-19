@@ -61,6 +61,9 @@ options:
    each file type can use wildcard ? and *
    default is ".jp*".
 
+--detection-udp
+   set detection method to old UDP behavor.
+
 END
 	exit 1;
 }
@@ -87,6 +90,7 @@ my $intervalSpray = 5;
 my $timeoutFlashAirCheck = 15;
 my $optProtectedOnly = 0;
 my $downloadTimeout = 30;
+my $detectionUdp = 0;
 
 GetOptions (
  "net=s" => \$net
@@ -96,6 +100,7 @@ GetOptions (
 ,"v|verbose:+" => \$verbose
 ,"readonly:+" => \$optProtectedOnly
 ,"filetype=s" => \$fileTypeSpec
+,"detection-udp:+" => \$detectionUdp
 ) or usage();
 
 $net =~/\A\d+\.\d+\.\d+\z/ or die "parameter 'net': invalid  format.\n";
@@ -196,6 +201,23 @@ sub startFlashAirCheck{
 	);
 }
 
+#########################################################
+# send http request to all addresses in WLAN network.
+
+my $intervalLastDetectionTcp = 5;
+my $timeLastDetectionTcp = 0;
+
+sub detectionTcp(){
+	my $now = time;
+	return if $now - $timeLastDetected < 15;
+
+	return if $now -$timeLastDetectionTcp < $intervalLastDetectionTcp;
+	$timeLastDetectionTcp = $now;
+
+	for(my $i=2;$i <= 254;++$i){
+		startFlashAirCheck("$net.$i");
+	}
+}
 
 #########################################################
 # read arp
@@ -205,7 +227,6 @@ my $lastStrDevices ="";
 sub arpCheck{
 	my $now = time;
 	
-	return if $downloadBusy;
 	return if $now - $timeLastDetected < 15;
 
 	return if $now -$timeLastArpCheck < $intervalArpCheck;
@@ -252,7 +273,6 @@ my $timeLastSpray = 0;
 sub spray{
 	my $now = time;
 
-	return if $downloadBusy;
 	return if $now - $timeLastDetected < 15;
 	return if $now - $timeLastSpray < $intervalSpray;
 	$timeLastSpray = $now;
@@ -564,17 +584,17 @@ sub readQueue{
 
 sub download{
 
-	return if $downloadBusy;
-
 	my $now = time;
 	return if $now -$timeLastDownload < $checkInterval;
+	$timeLastDownload = $now;
 
 	# ターゲットデバイス
 	my($device) = 
 		sort{ $b->{timeLastOk} <=> $a->{timeLastOk} } 
 		grep{ $_->{timeLastOk} } 
 		values %flashAirCheckStatus;
-	return if not $device;
+
+	$device or return log("device is not detected yet.");
 
 	# ダウンロード処理中
 	$downloadBusy =1;
@@ -626,14 +646,20 @@ my $timer = AnyEvent->timer(
 	after =>1
 	,interval => 1
 	,cb => sub { 
-		download();
-		arpCheck();
-		spray();
-		$verbose >= 10 and log("anyevent active connections: $AnyEvent::HTTP::ACTIVE");
-		
-		if( $progressEnabled ){
-			sayProgress();
+
+		if(! $downloadBusy ){
+			download();
+
+			if( $detectionUdp){
+				arpCheck();
+				spray();
+			}else{
+				detectionTcp();
+			}
+			$verbose >= 10 and log("anyevent active connections: $AnyEvent::HTTP::ACTIVE");
 		}
+
+		sayProgress() if $progressEnabled;
 	}
 );
 
