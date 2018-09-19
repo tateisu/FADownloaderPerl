@@ -1,5 +1,3 @@
-[日本語](./README.ja.md)
-
 # FADownloaderPerl
 ネットワーク中からFlashAir SD-WLAN カードを自動探索してファイルのダウンロードを行うPerlスクリプトです。
 
