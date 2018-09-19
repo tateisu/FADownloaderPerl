@@ -156,8 +156,8 @@ mkdir($recordFolder);
 my @reFileTypes ;
 while( $fileTypeSpec =~ /(\S+)/g ){
 	my $a = quotemeta($1);
-	$a =~ s/\\([*])/.*?/;
-	$a =~ s/\\([?])/[\\s\\S]/;
+	$a =~ s/\\[*]/.*?/;
+	$a =~ s/\\[?]/[\\s\\S]/;
 	log("file type regex: $a");
 	push @reFileTypes, qr/$a\z/i;
 }
