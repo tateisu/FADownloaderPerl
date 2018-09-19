@@ -91,9 +91,9 @@ my $detectionUdp = 0;
 
 my $intervalArpCheck = 5;
 my $intervalSpray = 5;
+my $intervalLastDetectionTcp = 5;
 my $timeoutFlashAirCheck = 15;
 my $downloadTimeout = 30;
-my $intervalLastDetectionTcp = 5;
 
 GetOptions (
 	 "net=s" => \$net
@@ -213,7 +213,6 @@ sub startFlashAirCheck{
 # send http request to all addresses in WLAN network.
 
 my $timeLastDetectionTcp = 0;
-
 sub detectionTcp(){
 	my $now = time;
 	return if $now - $timeLastDetected < 15;
@@ -307,11 +306,6 @@ sub spray{
 
 #########################################################
 
-sub clearBusy{
-	$timeLastDownload = time;
-	$downloadBusy = 0;
-}
-
 sub formatFileSize($){
 	my( $n )= @_;
 	if($n >= 1000000000){
@@ -376,9 +370,98 @@ sub statusErrorString($){
 	return "(? missing status)";
 }
 
-sub readQueue;
+sub writeFile{
+	my($path,$data)=@_;
+	if( not open(my $fh,">:raw",$path) ){
+		log("$path: $!");
+	}else{
+		print $fh $data;
+		if( not close ($fh) ){
+			log( "$path: $!");
+		}else{
+			log( "$path file saved.");
+		}
+	}
+}
+
+sub clearBusy{
+	$timeLastDownload = time;
+	$downloadBusy = 0;
+}
+
+sub startFolder($);
+sub startFileDownload($);
+
+sub readQueue{
+	$progressEnabled = 0;
+	$lastProgressString = "";
+	$progressBody="";
+	$currentFile ="";
+	$currentFileSize=0;
+	$retryCount=0;
+
+	if( not @queue ){
+		# スキャン中にファイルが増えてたかもしれない
+		# FlashAir 更新ステータスを再度確認する
+		$currentHttp = http_get "http://$targetAddr/command.cgi?op=121"
+			,timeout => $downloadTimeout
+			,keepalive => 0
+			,proxy => undef
+			,sub{
+				my($data,$headers)=@_;
+				if( $headers->{Status} != 200 or not defined $data ){
+					# ステータス取得ができない
+					log( "$targetAddr : ",statusErrorString($headers));
+				}elsif( not $data =~/(-?\s*\d+)/ ){
+					# ステータス取得ができない
+					log( "can't get FlashAir update status. data=$data");
+				}else{
+					my $v = 0+ $1;
+					if( $v != -1 and $v == $lastFlashAirStatus ){
+						# 前回スキャン開始時と同じ値なので変更されていない
+						log( "FlashAir update status is not changed.");
+					}else{
+						# 更新があったことが分かる
+						log( "FlashAir update status is changed. $lastFlashAirStatus => $v");
+						$lastFlashAirStatus = $v;
+						# スキャンを再度開始する
+						$beforeFile = 1;
+						push @queue,{ path => "/" ,isFolder => 1};
+						readQueue();
+						return;
+					}
+				}
+				# スキャン終了
+				log("Scan complete.");
+				clearBusy();
+			};
+		return;
+	}
+
+	## フォルダを全てスキャンし終えたら、転送予定のファイル数とバイト数を計算する
+	if( $beforeFile and not $queue[0]->{isFolder} ){
+		$beforeFile = 0;
+		$countFiles = 0;
+		$countBytes = 0;
+		$progressFiles = 0;
+		$progressBytes = 0;
+		for my $item (@queue){
+			next if $item->{isFolder};
+			$countFiles += 1;
+			$countBytes += $item->{size};
+		}
+	}
+
+	my $item = shift @queue;
+	if( $item->{isFolder} ){
+		startFolder($item);
+	}else{
+		startFileDownload($item);
+	}
+}
 
 sub handleFolderResult{
+	my $willRetry=1;
 	eval{
 		my($data,$headers)=@_;
 		
@@ -388,6 +471,9 @@ sub handleFolderResult{
 		if( not defined $data ){
 			return log("$lastItem->{path} : missing response body.");
 		}
+		
+		$willRetry = 0;
+		
 		while( $data =~ /([^\x0d\x0a]+)/g ){
 			my $line = $1;
 			
@@ -468,24 +554,27 @@ sub handleFolderResult{
 	
 	};
 	$@ and cluck $@;
-	readQueue();
-}
-
-sub writeFile{
-	my($path,$data)=@_;
-	if( not open(my $fh,">:raw",$path) ){
-		log("$path: $!");
+	if( $willRetry and $retryCount < 10 ){
+		++$retryCount;
+		startFolder($lastItem);
 	}else{
-		print $fh $data;
-		if( not close ($fh) ){
-			log( "$path: $!");
-		}else{
-			log( "$path file saved.");
-		}
+		readQueue();
 	}
 }
 
-sub startFileDownload;
+sub startFolder($){
+	my($item)=@_;
+	$lastItem = $item;
+
+	log("$item->{path} reading directory…");
+	$currentHttp = http_get "http://$targetAddr/command.cgi?op=100&DIR=".uri_escape($item->{path})
+		,timeout => $downloadTimeout
+		,keepalive => 0
+		,proxy => undef
+		,\&handleFolderResult;
+}
+
+
 
 sub handleFileResult{
 	my $willRetry=1;
@@ -524,7 +613,7 @@ sub handleFileResult{
 	}
 }
 
-sub startFileDownload{
+sub startFileDownload($){
 	my($item)=@_;
 	$lastItem = $item;
 
@@ -544,81 +633,6 @@ sub startFileDownload{
 			$progressBody .= $_[0] if defined $_[0];
 		}
 		,\&handleFileResult;
-}
-
-
-sub readQueue{
-	$progressEnabled = 0;
-	$lastProgressString = "";
-	$progressBody="";
-	$currentFile ="";
-	$currentFileSize=0;
-	$retryCount=0;
-
-	if( not @queue ){
-		# スキャン中にファイルが増えてたかもしれない
-		# FlashAir 更新ステータスを再度確認する
-		$currentHttp = http_get "http://$targetAddr/command.cgi?op=121"
-			,timeout => $downloadTimeout
-			,keepalive => 0
-			,proxy => undef
-			,sub{
-				my($data,$headers)=@_;
-				if( $headers->{Status} != 200 or not defined $data ){
-					# ステータス取得ができない
-					log( "$targetAddr : ",statusErrorString($headers));
-				}elsif( not $data =~/(-?\s*\d+)/ ){
-					# ステータス取得ができない
-					log( "can't get FlashAir update status. data=$data");
-				}else{
-					my $v = 0+ $1;
-					if( $v != -1 and $v == $lastFlashAirStatus ){
-						# 前回スキャン開始時と同じ値なので変更されていない
-						log( "FlashAir update status is not changed.");
-					}else{
-						# 更新があったことが分かる
-						log( "FlashAir update status is changed. $lastFlashAirStatus => $v");
-						$lastFlashAirStatus = $v;
-						# スキャンを再度開始する
-						$beforeFile = 1;
-						push @queue,{ path => "/" ,isFolder => 1};
-						readQueue();
-						return;
-					}
-				}
-				# スキャン終了
-				log("Scan complete.");
-				clearBusy();
-			};
-		return;
-	}
-
-	if( $beforeFile && ! $queue[0]->{isFolder} ){
-		$beforeFile = 0;
-		## 転送予定のファイル数とバイト数を調べる
-		$countFiles = 0;
-		$countBytes = 0;
-		$progressFiles = 0;
-		$progressBytes = 0;
-		for my $item (@queue){
-			next if $item->{isFolder};
-			$countFiles += 1;
-			$countBytes += $item->{size};
-		}
-	}
-
-	my $item = shift @queue;
-	$lastItem = $item;
-	if( $item->{isFolder} ){
-		log("$item->{path} reading directory…");
-		$currentHttp = http_get "http://$targetAddr/command.cgi?op=100&DIR=".uri_escape($item->{path})
-			,timeout => $downloadTimeout
-			,keepalive => 0
-			,proxy => undef
-			,\&handleFolderResult;
-	}else{
-		startFileDownload($item);
-	}
 }
 
 sub download{
@@ -687,14 +701,15 @@ my $timer = AnyEvent->timer(
 	,cb => sub { 
 
 		if(! $downloadBusy ){
-			download();
-
 			if( $detectionUdp){
 				arpCheck();
 				spray();
 			}else{
 				detectionTcp();
 			}
+
+			download();
+
 			$verbose >= 10 and log("anyevent active connections: $AnyEvent::HTTP::ACTIVE");
 		}
 
