@@ -65,6 +65,15 @@ END
 	exit 1;
 }
 
+use subs 'log';
+sub log{
+	my @lt = localtime;
+	$lt[4]+=1;
+	$lt[5]+=1900;
+	my $timestr = sprintf("%d-%02d-%02d_%02d:%02d:%02d",reverse @lt[0..5]);
+	warn $timestr," ",@_,"\n";
+}
+
 #########################################################
 
 my $net = "192.168.1";
@@ -103,8 +112,8 @@ while( $fileTypeSpec =~ /(\S+)/g ){
 	my $a = quotemeta($1);
 	$a =~ s/\\([*])/.*?/;
 	$a =~ s/\\([?])/[\\s\\S]/;
-	warn "file type regex: $a\n";
-	push @reFileTypes, qr/$a/i;
+	log("file type regex: $a");
+	push @reFileTypes, qr/$a\z/i;
 }
 (@reFileTypes >0 ) or die "parameter 'filetype': must contains valid file types.\n";
 
@@ -127,15 +136,8 @@ my $currentFile ="";
 my $currentFileSize =0;
 my $progressEnabled;
 my $lastProgressString="";
+my $retryCount=0;
 
-use subs 'log';
-sub log{
-	my @lt = localtime;
-	$lt[4]+=1;
-	$lt[5]+=1900;
-	my $timestr = sprintf("%d-%02d-%02d_%02d:%02d:%02d",reverse @lt[0..5]);
-	warn $timestr," ",@_,"\n";
-}
 
 #########################################################
 
@@ -408,7 +410,7 @@ sub handleFolderResult{
 				}
 				
 				# ファイル拡張子がマッチしないなら転送しない
-				if( not grep{ $file_name =~ /$_\z/i} @reFileTypes ){
+				if( not grep{ $file_name =~ /$_/i} @reFileTypes ){
 					$verbose and log( "$file_name : not match to file types.");
 					next;
 				}
@@ -456,13 +458,15 @@ sub writeFile{
 	}
 }
 
-sub handleFileResult{
-	eval{
+sub startFileDownload;
 
+sub handleFileResult{
+	my $willRetry=1;
+	eval{
 		sayProgress();
 
 		my($data,$headers)=@_;
-		
+
 		my $item = $lastItem;
 		
 		if( $headers->{Status} != 200 ){
@@ -478,13 +482,41 @@ sub handleFileResult{
 		}
 		writeFile($item->{downloadPath},$data);
 		writeFile($item->{recordPath},"");
+		$willRetry =0;
 	};
 	$@ and cluck $@;
+	
+	if( $willRetry and $retryCount < 10 ){
+		++$retryCount;
+		startFileDownload($lastItem);
+	}else{
+		$progressFiles++;
+		$progressBytes+= $lastItem->{size};
 
-	$progressFiles++;
-	$progressBytes+= $lastItem->{size};
+		readQueue();
+	}
+}
 
-	readQueue();
+sub startFileDownload{
+	my($item)=@_;
+	$lastItem = $item;
+
+	$lastProgressString = "";
+	$progressBody="";
+	$progressEnabled = 1;
+	$currentFile = $item->{path};
+	$currentFileSize = $item->{size};
+	log( "$item->{path} reading file…");
+
+	$currentHttp = http_get "http://$targetAddr/".uri_escape($item->{path})
+		,timeout => $downloadTimeout
+		,keepalive => 0
+		,proxy => undef
+		,on_body => sub{
+			# my($partial_body, $headers)=@_;
+			$progressBody .= $_[0] if defined $_[0];
+		}
+		,\&handleFileResult;
 }
 
 
@@ -494,6 +526,7 @@ sub readQueue{
 	$progressBody="";
 	$currentFile ="";
 	$currentFileSize=0;
+	$retryCount=0;
 
 	if( not @queue ){
 		log("Scan complete.");
@@ -525,22 +558,7 @@ sub readQueue{
 			,proxy => undef
 			,\&handleFolderResult;
 	}else{
-
-		$progressEnabled = 1;
-		$currentFile = $item->{path};
-		$currentFileSize = $item->{size};
-		log( "$item->{path} reading file…");
-
-		$currentHttp = http_get "http://$targetAddr/".uri_escape($item->{path})
-			,timeout => $downloadTimeout
-			,keepalive => 0
-			,proxy => undef
-			,on_body => sub{
-				# my($partial_body, $headers)=@_;
-				$progressBody .= $_[0] if defined $_[0];
-			}
-			,\&handleFileResult;
-		
+		startFileDownload($item);
 	}
 }
 
