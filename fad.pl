@@ -29,7 +29,7 @@ usage: $0 (options)...
 options:
 
 --net=(netspec)
-   specify the your LAN network for detecting FlashAir.
+   for detecting FlashAir, specify the "first 3 number part in IPv4 address" of your LAN network.
    default is "192.168.1".
 
 --df (folder)
@@ -39,7 +39,7 @@ options:
 
 --rf (folder)
 --record-folder=(folder)
-   specify the directory path for check files to skil already download.
+   specify the directory path for check files to skip already download.
    default is "./record".
 
 -i (seconds)
@@ -53,7 +53,7 @@ options:
    default is not set.
 
 --readonly
-   download files only they has "read only" attrivute.
+   download files only they has "read only" attribute.
    default is not set.
 
 --filetype=".jp* .raw"
