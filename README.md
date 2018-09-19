@@ -54,12 +54,16 @@ options:
 - Run `perl fad.pl --net=192.168.1`. please change the value of --net option to "first 3 number part in IPv4 address".
 
 ## Behavor of detecting FlashAir card
+
+- This app periodically send HTTP requests to all address in WLAN network to find FlashAir card.
+
+### old behavor. (use --detection-udp to enable this)
 - This app periodically send UDP packet to all address in WLAN network, instead of send ARP request.
 - This app periodically runs `arp -a` command to detect addresses in WLAN network.
 - This app periodically send HTTP requests to detected addresses to find FlashAir card.
 
 ## Behavor of file download
-- This app will periodically scans files in FlashAir card.
+- This app periodically scans files in FlashAir card.
 - The file that has hidden/system attributes, or that's name is not match file types, or that is already downloaded will be ignored.
 - This app will download files in FlashAir card and save it to "./download/{YYYYMMDD}/{file}". 
 - This app also create empty file "./record/{YYYYMMDD}/{file}" to check the file is already download.
