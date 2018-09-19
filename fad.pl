@@ -82,25 +82,33 @@ sub log{
 my $net = "192.168.1";
 my $downloadFolder = "./download";
 my $recordFolder = "./record";
-my $fileTypeSpec=".jp*";
+
 my $checkInterval = 5;
 my $verbose = 0;
+my $optProtectedOnly = 0;
+my $fileTypeSpec=".jp*";
+my $detectionUdp = 0;
+
 my $intervalArpCheck = 5;
 my $intervalSpray = 5;
 my $timeoutFlashAirCheck = 15;
-my $optProtectedOnly = 0;
 my $downloadTimeout = 30;
-my $detectionUdp = 0;
+my $intervalLastDetectionTcp = 5;
 
 GetOptions (
- "net=s" => \$net
-,"df|download-folder=s" => \$downloadFolder
-,"rf|record-folder=s" => \$recordFolder
-,"i|interval=i" => \$checkInterval
-,"v|verbose:+" => \$verbose
-,"readonly:+" => \$optProtectedOnly
-,"filetype=s" => \$fileTypeSpec
-,"detection-udp:+" => \$detectionUdp
+	 "net=s" => \$net
+	,"df|download-folder=s" => \$downloadFolder
+	,"rf|record-folder=s" => \$recordFolder
+	,"i|interval=i" => \$checkInterval
+	,"v|verbose:+" => \$verbose
+	,"readonly:+" => \$optProtectedOnly
+	,"filetype=s" => \$fileTypeSpec
+	,"detection-udp:+" => \$detectionUdp
+	,"intervalArpCheck=i" => \$intervalArpCheck
+	,"intervalSpray=i" => \$intervalSpray
+	,"timeoutFlashAirCheck=i" => \$timeoutFlashAirCheck
+	,"downloadTimeout=i" => \$downloadTimeout
+	,"intervalLastDetectionTcp=i" => \$intervalLastDetectionTcp
 ) or usage();
 
 $net =~/\A\d+\.\d+\.\d+\z/ or die "parameter 'net': invalid  format.\n";
@@ -204,7 +212,6 @@ sub startFlashAirCheck{
 #########################################################
 # send http request to all addresses in WLAN network.
 
-my $intervalLastDetectionTcp = 5;
 my $timeLastDetectionTcp = 0;
 
 sub detectionTcp(){
@@ -549,8 +556,40 @@ sub readQueue{
 	$retryCount=0;
 
 	if( not @queue ){
-		log("Scan complete.");
-		clearBusy();
+		# スキャン中にファイルが増えてたかもしれない
+		# FlashAir 更新ステータスを再度確認する
+		$currentHttp = http_get "http://$targetAddr/command.cgi?op=121"
+			,timeout => $downloadTimeout
+			,keepalive => 0
+			,proxy => undef
+			,sub{
+				my($data,$headers)=@_;
+				if( $headers->{Status} != 200 or not defined $data ){
+					# ステータス取得ができない
+					log( "$targetAddr : ",statusErrorString($headers));
+				}elsif( not $data =~/(-?\s*\d+)/ ){
+					# ステータス取得ができない
+					log( "can't get FlashAir update status. data=$data");
+				}else{
+					my $v = 0+ $1;
+					if( $v != -1 and $v == $lastFlashAirStatus ){
+						# 前回スキャン開始時と同じ値なので変更されていない
+						log( "FlashAir update status is not changed.");
+					}else{
+						# 更新があったことが分かる
+						log( "FlashAir update status is changed. $lastFlashAirStatus => $v");
+						$lastFlashAirStatus = $v;
+						# スキャンを再度開始する
+						$beforeFile = 1;
+						push @queue,{ path => "/" ,isFolder => 1};
+						readQueue();
+						return;
+					}
+				}
+				# スキャン終了
+				log("Scan complete.");
+				clearBusy();
+			};
 		return;
 	}
 
@@ -636,7 +675,7 @@ sub download{
 			}
 			push @queue,{ path => "/" ,isFolder => 1};
 			readQueue();
-		}
+		};
 }
 
 ##########################################################
