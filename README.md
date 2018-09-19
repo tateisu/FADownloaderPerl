@@ -57,7 +57,7 @@ options:
 - This app periodically send HTTP requests to detected addresses to find FlashAir card.
 
 ## Behavor of file download
-- This app will periodically scans files in download files in FlashAir card.
+- This app will periodically scans files in FlashAir card.
 - The file that has hidden/system attributes, or that's name is not match file types, or that is already downloaded will be ignored.
 - This app will download files in FlashAir card and save it to "./download/{YYYYMMDD}/{file}". 
 - This app also create empty file "./record/{YYYYMMDD}/{file}" to check the file is already download.
